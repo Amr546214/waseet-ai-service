@@ -51,25 +51,9 @@ export class TenantAuthService {
       if (!auth?.startsWith("Bearer ")) throw featureError("AUTH_REQUIRED", "An expiring Bearer token is required.", 401);
       const rawToken = auth.slice(7).trim();
       const parts = rawToken.split(".");
-      if (parts.length !== 3) {
-        const legacyDevToken = process.env.WASEET_AI_LEGACY_DEV_TOKEN || "waseet_dev_sec_99a8b7c6d5e4";
-        if (!this.compare(rawToken, env.WASEET_AI_CLIENT_SECRET) && this.compare(rawToken, legacyDevToken)) {
-          const bodyActor = (request.body as { actor?: unknown } | undefined)?.actor;
-          const parsedActor = bodyActor ? actorSchema.safeParse(bodyActor) : null;
-          const actor = parsedActor?.success ? parsedActor.data : { userId: "waseet-backend", role: "provider" as const };
-          const context: TenantContext = {
-            clientId: env.WASEET_AI_CLIENT_ID,
-            environment: env.WASEET_AI_ENVIRONMENT,
-            actor,
-            scopes: ["ai:read", "ai:generate", "data:write", "knowledge:write", "assessment:admin"],
-            requestId,
-          };
-          (request as FastifyRequest & { tenantContext: TenantContext }).tenantContext = context;
-          return context;
-        }
-        throw featureError("AUTH_INVALID", "Invalid access token.", 401);
-      }
-      if (parts.some(part => part.length > 8000)) throw featureError("AUTH_INVALID", "Invalid access token.", 401);
+      // Only signed, expiring service tokens are accepted. Bootstrap secrets and
+      // legacy bearer credentials must never become an alternate identity path.
+      if (parts.length !== 3 || parts.some(part => !part || part.length > 8000)) throw featureError("AUTH_INVALID", "Invalid access token.", 401);
       const [header, payload, signature] = parts as [string, string, string];
       const expected = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
       if (!this.compare(signature, expected)) throw featureError("AUTH_INVALID", "Invalid access token.", 401);

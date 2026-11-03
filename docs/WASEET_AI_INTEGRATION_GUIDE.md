@@ -19,20 +19,28 @@ flowchart LR
 
 ### بيانات الاعتماد (Credentials)
 - **Base URL:** `http://localhost:3000` (أو رابط Cloud Run في الإنتاج)
-- **Header:** `Authorization: Bearer <WASEET_AI_CLIENT_SECRET>`
+- **Header:** `Authorization: Bearer <SIGNED_ACCESS_TOKEN>`
 - **Client ID Header:** `X-Client-Id: <WASEET_AI_CLIENT_ID>`
 - **Request ID Header:** `X-Request-Id: <UUID>`
 
 ### الحصول على توكن التحقق (REST)
+تتم هذه الخطوة بين الخوادم فقط. كلمة سر العميل ليست توكن Bearer ولا تُرسل للمتصفح.
+
 ```http
 POST /v1/auth/token
 Content-Type: application/json
 
 {
-  "clientId": "waseet_core_backend",
-  "clientSecret": "waseet_secret_dev_key_2026"
+  "clientId": "<SERVER_CLIENT_ID>",
+  "clientSecret": "<SERVER_CLIENT_SECRET>",
+  "environment": "dev",
+  "actor": { "userId": "<AUTHENTICATED_USER_ID>", "role": "provider" }
 }
 ```
+
+استخدم `token` من الرد كترويسة Bearer. صلاحيته 900 ثانية ومربوط بهوية المستخدم والعميل والبيئة. يحدد باك المنصة `actor` من الجلسة الحقيقية؛ لا يثق بهوية يختارها المتصفح. الرموز الثابتة والرموز القديمة مرفوضة في كل البيئات. يجب تطابق بيانات العميل والبيئة بين الخدمتين.
+
+باك المنصة يدعم التبادل عبر `WASEET_AI_AUTH_MODE=signed` مع `WASEET_AI_CLIENT_SECRET` و`WASEET_AI_CLIENT_ID` و`WASEET_AI_ENVIRONMENT` الصحيحة. وجود الكود لا يثبت إعداد النسخة المنشورة؛ راجع الإعدادات بشكل آمن قبل تطبيق الإصلاح.
 
 ---
 
@@ -187,7 +195,7 @@ socket.on("ai_chat_response", (data) => {
 ### 1. توليد النطق الصوتي (Unary Synthesis)
 * **المسار:** `POST /v1/ai/tts/synthesize`
 * **الترويسات:**
-  * `Authorization: Bearer waseet_secret_dev_key_2026`
+  * `Authorization: Bearer <SERVER_CLIENT_SECRET>`
   * `Content-Type: application/json`
 
 **بيانات الطلب (Request Payload):**

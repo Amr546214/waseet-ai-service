@@ -65,39 +65,43 @@ export function extractTextContent(body: Buffer, mimeType: string, source: strin
   text = text.trim();
   return { source, mimeType, sha256, contentRead: text.length > 0, excerpt: text.slice(0, MAX_TEXT), truncated: text.length > MAX_TEXT, basis: "FETCHED_TEXT", lineCount: text.split("\n").length };
 }
+/** Decode only bounded, well-formed inline content; never label a truncated prefix as the full file. */
+function decodeInlineContent(raw: string): { body: Buffer; mimeType: string } {
+  const comma = raw.indexOf(",");
+  if (comma < 5) throw featureError("INVALID_INLINE_CONTENT", "Malformed inline content.", 422);
+  const metadata = raw.slice(5, comma).split(";");
+  const mimeType = (metadata[0] || "text/plain").toLowerCase();
+  if (!/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(mimeType)) throw featureError("INVALID_INLINE_CONTENT", "Malformed inline content type.", 422);
+  const payload = raw.slice(comma + 1);
+  const base64 = metadata.slice(1).some(part => part.toLowerCase() === "base64");
+  const limit = base64 ? Math.ceil(MAX_BYTES / 3) * 4 : MAX_BYTES * 3;
+  if (payload.length > limit) throw featureError("CONTENT_TOO_LARGE", "Content exceeds the bounded read limit.", 422);
+  if (base64 && (payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload))) throw featureError("INVALID_INLINE_CONTENT", "Malformed base64 content.", 422);
+  const body = base64 ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload), "utf8");
+  if (!body.length) throw featureError("INVALID_INLINE_CONTENT", "Empty inline content.", 422);
+  if (body.length > MAX_BYTES) throw featureError("CONTENT_TOO_LARGE", "Content exceeds the bounded read limit.", 422);
+  return { body, mimeType };
+}
 export class ContentInspector {
   public static async inspect(rawUrls: string[], signal?: AbortSignal): Promise<InspectionResult> {
     signal ??= getTenantContext()?.signal;
     signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000);
     const evidence: ContentEvidence[] = [], unavailable: string[] = [];
-    for (const raw of [...new Set(rawUrls)].slice(0, 6)) {
+    const inputs = [...new Set(rawUrls)].slice(0, 6);
+    for (const [index, raw] of inputs.entries()) {
       if (signal?.aborted) throw featureError("CANCELLED", "Inspection cancelled.", 499);
       if (raw.startsWith("data:")) {
+        // An opaque per-input source keeps diagnostics useful without returning
+        // the inline payload (which can contain confidential document contents).
+        const source = `uploaded-file://inline/${index + 1}`;
         try {
-          const commaIdx = raw.indexOf(",");
-          const meta = commaIdx > 5 ? raw.slice(5, commaIdx) : "application/octet-stream";
-          const mimeType = meta.split(";")[0] || "application/octet-stream";
-          const payload = commaIdx >= 0 ? raw.slice(commaIdx + 1) : "";
-          const body = meta.includes("base64") ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload), "utf8");
-          const extracted = await extractContent(body.subarray(0, MAX_BYTES), mimeType, "uploaded-file://inline", signal);
-          const readable = extracted.some(item => item.contentRead);
-          if (readable) {
-            evidence.push(...extracted);
-          } else {
-            const sha256 = createHash("sha256").update(body).digest("hex");
-            evidence.push({
-              source: "uploaded-file://inline",
-              mimeType,
-              sha256,
-              contentRead: true,
-              excerpt: `ملف إثبات مرفوع مباشرة من مقدم الخدمة (${mimeType}، الحجم ${Math.max(1, Math.round(body.byteLength / 1024))} كيلوبايت).`,
-              truncated: false,
-              basis: "UPLOADED_BINARY_METADATA",
-              lineCount: 1,
-            });
-          }
-        } catch {
-          // ignore malformed inline data URL
+          const { body, mimeType } = decodeInlineContent(raw);
+          const extracted = await extractContent(body, mimeType, source, signal);
+          evidence.push(...extracted);
+          if (!extracted.some(item => item.contentRead)) unavailable.push(`CONTENT_NOT_READABLE:${source}`);
+        } catch (error) {
+          if (signal.aborted || (error as { code?: string }).code === "CANCELLED") throw featureError("CANCELLED", "Inspection cancelled.", 499);
+          unavailable.push(`${(error as { code?: string }).code ?? "INVALID_INLINE_CONTENT"}:${source}`);
         }
         continue;
       }
