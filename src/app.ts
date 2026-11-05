@@ -6,6 +6,7 @@ import { assessmentRoutes } from "./features/assessments/routes.js";
 import { proposalRoutes } from "./features/proposals/routes.js";
 import { providerRoutes } from "./features/providers/routes.js";
 import { marketplaceRoutes } from "./features/marketplace/routes.js";
+import { identityRoutes } from "./features/identity/routes.js";
 import { disputeRoutes } from "./features/disputes/routes.js";
 import { businessModelRoutes } from "./features/business-models/routes.js";
 import { avatarRoutes } from "./features/avatar/routes.js";
@@ -109,6 +110,7 @@ export function buildApp(): FastifyInstance {
   app.register(providerRoutes);
   app.register(marketplaceRoutes);
   app.register(disputeRoutes);
+  app.register(identityRoutes);
   app.register(businessModelRoutes);
   app.register(avatarRoutes);
   app.register(helpRoutes);
